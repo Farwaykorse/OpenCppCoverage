@@ -18,8 +18,8 @@ skip_commits:
   - '**/*.filters'
 
 cache:
-- C:\Tools\vcpkg\installed
-- C:\Tools\vcpkg\packages  # required for nuget generation
+- C:\Tools\vcpkg\installed #-> appveyor.yml # Delete cache on change
+- C:\Tools\vcpkg\packages #-> appveyor.yml # required for nuget generation
 - C:\Tools\vcpkg\vcpkg.exe
 
 image:
@@ -44,23 +44,36 @@ environment:
 
 
 install:
+# Install latest version of vcpkg.exe
 - cd C:\Tools\vcpkg && git pull --quiet
 - ps: |
     if ( $(vcpkg upgrade) -match "^Warning: Different source.*for vcpkg" ) {
       .\bootstrap-vcpkg.bat 1>$null
       vcpkg integrate install 1>$null
     }
+# Use a fixed versions of all dependencies
 - ps: |
     if ( "$env:DEPENDENCIES" -eq "FIXED" ) {
       git checkout $env:VCPKG_SHA1 --quiet
     }
+# Only build Release or Debug versions (for most packages)
+- ps: |
+    if ( "$env:CONFIGURATION" -eq "Release") {
+      $triplet_build = 'set(VCPKG_BUILD_TYPE release)'
+    } else {
+      $triplet_build = 'set(VCPKG_BUILD_TYPE debug)'
+    }
+    $triplet_file = ".\triplets\${env:PLATFORM}-windows.cmake"
+    $triplet_build | Out-File ${triplet_file} -Encoding ascii -Append
+# Display cache state
 - vcpkg list
 - vcpkg update
+# Updating cached dependencies
 - ps: |
-    # Building with latest release of all dependencies
     if (!($(vcpkg upgrade) -match "^All installed packages are up-to-date")) {
       vcpkg upgrade --no-dry-run
     }
+# Install new dependencies
 - vcpkg install poco:%PLATFORM%-windows
 - vcpkg install protobuf:%PLATFORM%-windows
 - vcpkg install gtest:%PLATFORM%-windows
