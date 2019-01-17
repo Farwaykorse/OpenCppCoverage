@@ -19,6 +19,7 @@ skip_commits:
 
 cache:
 - C:\Tools\vcpkg\installed
+- C:\Tools\vcpkg\packages  # required for nuget generation
 - C:\Tools\vcpkg\vcpkg.exe
 
 image:
@@ -78,6 +79,32 @@ install:
 - vcpkg install boost-locale:%PLATFORM%-windows
 - vcpkg install boost-iostreams:%PLATFORM%-windows
 - vcpkg install range-v3:%PLATFORM%-windows
+- >-
+  vcpkg export
+  poco:%PLATFORM%-windows
+  protobuf:%PLATFORM%-windows
+  gtest:%PLATFORM%-windows
+  ctemplate:%PLATFORM%-windows
+  boost-optional:%PLATFORM%-windows
+  boost-filesystem:%PLATFORM%-windows
+  boost-algorithm:%PLATFORM%-windows
+  boost-container:%PLATFORM%-windows
+  boost-program-options:%PLATFORM%-windows
+  boost-regex:%PLATFORM%-windows
+  boost-range:%PLATFORM%-windows
+  boost-log:%PLATFORM%-windows
+  boost-property-tree:%PLATFORM%-windows
+  boost-spirit:%PLATFORM%-windows
+  boost-uuid:%PLATFORM%-windows
+  boost-locale:%PLATFORM%-windows
+  boost-iostreams:%PLATFORM%-windows
+  range-v3:%PLATFORM%-windows
+  --nuget --nuget-id=ThirdParty --nuget-version=1.2.0
+- ps: >-
+    C:\Tools\vcpkg\downloads\tools\nuget-*-windows\nuget.exe
+    install ThirdParty
+    -Source C:\Tools\vcpkg
+    -OutputDirectory $env:APPVEYOR_BUILD_FOLDER
 
 before_build:
 - cd %APPVEYOR_BUILD_FOLDER%
