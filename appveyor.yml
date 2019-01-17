@@ -1,0 +1,82 @@
+##====---- appveyor.yml                                               ----====##
+# CI for OpenCppCoverage.
+# Nuget generation is just to be compatible with the default project files.
+#
+
+# fetch repository as a zip archive
+shallow_clone: true
+skip_branch_with_pr: true
+
+cache:
+- C:\Tools\vcpkg\installed
+- C:\Tools\vcpkg\vcpkg.exe
+
+image:
+- Visual Studio 2017
+
+platform:
+- x86
+- x64
+
+configuration:
+- Debug
+- Release
+
+environment:
+  matrix:
+  - DEPENDENCIES: HEAD
+  - DEPENDENCIES: FIXED
+  global:
+    APPVEYOR_SAVE_CACHE_ON_ERROR: true
+    TOOLCHAIN_FILE: 'C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake'
+    VCPKG_SHA1: 2ac7527b40b1dbeb7856b9f763362c1e139e2ca9
+
+
+install:
+- cd C:\Tools\vcpkg && git pull --quiet
+- ps: |
+    if ( $(vcpkg upgrade) -match "^Warning: Different source.*for vcpkg" ) {
+      .\bootstrap-vcpkg.bat 1>$null
+      vcpkg integrate install 1>$null
+    }
+- ps: |
+    if ( "$env:DEPENDENCIES" -eq "FIXED" ) {
+      git checkout $env:VCPKG_SHA1 --quiet
+    }
+- vcpkg list
+- vcpkg update
+- ps: |
+    # Building with latest release of all dependencies
+    if (!($(vcpkg upgrade) -match "^All installed packages are up-to-date")) {
+      vcpkg upgrade --no-dry-run
+    }
+- vcpkg install poco:%PLATFORM%-windows
+- vcpkg install protobuf:%PLATFORM%-windows
+- vcpkg install gtest:%PLATFORM%-windows
+- vcpkg install ctemplate:%PLATFORM%-windows
+- vcpkg install boost-optional:%PLATFORM%-windows
+- vcpkg install boost-filesystem:%PLATFORM%-windows
+- vcpkg install boost-algorithm:%PLATFORM%-windows
+- vcpkg install boost-container:%PLATFORM%-windows
+- vcpkg install boost-program-options:%PLATFORM%-windows
+- vcpkg install boost-regex:%PLATFORM%-windows
+- vcpkg install boost-range:%PLATFORM%-windows
+- vcpkg install boost-log:%PLATFORM%-windows
+- vcpkg install boost-property-tree:%PLATFORM%-windows
+- vcpkg install boost-spirit:%PLATFORM%-windows
+- vcpkg install boost-uuid:%PLATFORM%-windows
+- vcpkg install boost-locale:%PLATFORM%-windows
+- vcpkg install boost-iostreams:%PLATFORM%-windows
+- vcpkg install range-v3:%PLATFORM%-windows
+
+before_build:
+- cd %APPVEYOR_BUILD_FOLDER%
+
+build_script:
+- >-
+  MSBuild
+  -nologo
+  -verbosity:minimal
+  -p:Configuration="%CONFIGURATION%"
+  -p:Platform="%PLATFORM%"
+  -logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
