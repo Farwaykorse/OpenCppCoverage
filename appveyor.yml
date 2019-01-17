@@ -5,7 +5,17 @@
 
 # fetch repository as a zip archive
 shallow_clone: true
+
 skip_branch_with_pr: true
+skip_commits:
+  files:
+  - .github/
+  - .gitignore
+  - BuildThirdPartyDependencies.bat
+  - CreateRelease.bat
+  - LICENSE.txt
+  - '**/*.md'
+  - '**/*.filters'
 
 cache:
 - C:\Tools\vcpkg\installed
