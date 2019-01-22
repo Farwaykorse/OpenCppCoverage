@@ -113,7 +113,7 @@ install:
     foreach ($item in $packages) {
       vcpkg install $item
     }
-# Create a NuGet package
+# Create or fake a NuGet package
 - ps: |
     if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
       vcpkg export ${packages} --nuget --nuget-id=ThirdParty --nuget-version=${env:NUGET_version}
@@ -140,3 +140,48 @@ build_script:
   -p:Configuration="%CONFIGURATION%"
   -p:Platform="%PLATFORM%"
   -logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
+
+test_script:
+- ps: |
+    $gtest_list = @(
+      'ToolsTest.exe',
+      'FileFilterTest.exe',
+      'CppCoverageTest.exe'
+      'ExporterTest.exe'
+      'OpenCppCoverageTest.exe'
+    )
+    $mstest_list = @(
+      'DefaultTest.dll'
+    )
+    if ( "${env:PLATFORM}" -eq "x64" ) {
+      $gtest_list = $gtest_list.ForEach({
+        "${env:APPVEYOR_BUILD_FOLDER}\${env:PLATFORM}\${env:CONFIGURATION}\${_}"
+      })
+      $mstest_list = $mstest_list.ForEach({
+        "${env:APPVEYOR_BUILD_FOLDER}\${env:PLATFORM}\${env:CONFIGURATION}\${_}"
+      })
+    } else {
+      $gtest_list = $gtest_list.ForEach({
+        "${env:APPVEYOR_BUILD_FOLDER}\${env:CONFIGURATION}\${_}"
+      })
+      $mstest_list = $mstest_list.ForEach({
+        "${env:APPVEYOR_BUILD_FOLDER}\${env:CONFIGURATION}\${_}"
+      })
+    }
+    if ("$env:APPVEYOR_BUILD_WORKER_IMAGE" -match "Visual Studio 2017") {
+      $extensions = "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\IDE\Extensions\"
+    }
+    $TestAdapterPath = (
+      Get-ChildItem -Path ${extensions} -Recurse |
+      Where-Object { $_.Name -eq 'GoogleTestAdapter.TestAdapter.dll' } |
+      Select-Object -First 1
+    ).DirectoryName
+    if (! $TestAdapterPath) { Write-Error "Can't find GoogleTestAdapter." }
+    $runsettings = "${env:APPVEYOR_BUILD_FOLDER}\GoogleTestAdapter.runsettings"
+
+    foreach ($exec in $gtest_list) {
+      VSTest.Console "${exec}" /TestAdapterPath:"${TestAdapterPath}" /Settings:"${runsettings}" /logger:Appveyor
+    }
+    foreach ($exec in $mstest_list) {
+      VSTest.Console "${exec}" /logger:Appveyor
+    }
