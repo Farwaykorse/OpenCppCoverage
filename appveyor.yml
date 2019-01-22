@@ -129,6 +129,7 @@ install:
       popd
     }
 
+
 before_build:
 - ps: cd ${env:APPVEYOR_BUILD_FOLDER}
 
@@ -154,17 +155,18 @@ test_script:
       'DefaultTest.dll'
     )
     if ( "${env:PLATFORM}" -eq "x64" ) {
-      $gtest_list = $gtest_list.ForEach({
+      $gtest_path_list = $gtest_list.ForEach({
         "${env:APPVEYOR_BUILD_FOLDER}\${env:PLATFORM}\${env:CONFIGURATION}\${_}"
       })
-      $mstest_list = $mstest_list.ForEach({
+      $mstest_path_list = $mstest_list.ForEach({
         "${env:APPVEYOR_BUILD_FOLDER}\${env:PLATFORM}\${env:CONFIGURATION}\${_}"
       })
+      $OpenCppCoverage_exe = "${env:APPVEYOR_BUILD_FOLDER}\${env:PLATFORM}\${env:CONFIGURATION}\OpenCppCoverage.exe"
     } else {
-      $gtest_list = $gtest_list.ForEach({
+      $gtest_path_list = $gtest_path_list.ForEach({
         "${env:APPVEYOR_BUILD_FOLDER}\${env:CONFIGURATION}\${_}"
       })
-      $mstest_list = $mstest_list.ForEach({
+      $mstest_path_list = $mstest_path.ForEach({
         "${env:APPVEYOR_BUILD_FOLDER}\${env:CONFIGURATION}\${_}"
       })
     }
@@ -179,9 +181,31 @@ test_script:
     if (! $TestAdapterPath) { Write-Error "Can't find GoogleTestAdapter." }
     $runsettings = "${env:APPVEYOR_BUILD_FOLDER}\GoogleTestAdapter.runsettings"
 
-    foreach ($exec in $gtest_list) {
+    foreach ($exec in $gtest_path_list) {
       VSTest.Console "${exec}" /TestAdapterPath:"${TestAdapterPath}" /Settings:"${runsettings}" /logger:Appveyor
     }
-    foreach ($exec in $mstest_list) {
+    foreach ($exec in $mstest_path_list) {
       VSTest.Console "${exec}" /logger:Appveyor
     }
+
+on_success:
+- cd %APPVEYOR_BUILD_FOLDER%
+# Code coverage
+- ps: |
+    $command = "$OpenCppCoverage_exe --export_type=binary"
+    $command += " --modules ${env:APPVEYOR_BUILD_FOLDER}"
+    $command += " --sources ${env:APPVEYOR_BUILD_FOLDER}"
+    Foreach ( $exec in $gtest_path_list ) {
+      "$command -- $exec" | Invoke-Expression *>$null
+    }
+# Combine into a single report
+- ps: |
+    $combine = "$OpenCppCoverage_exe"
+    $combine += $gtest_list.ForEach({ " --input_coverage ${_}" })
+    $combine = $combine -replace 'Test\.exe', 'Test.cov'
+    $combine += ' --export_type=cobertura:Coverage.xml'
+    $combine | Invoke-Expression *>$null
+# Install uploader for codecov.io
+- ps: $(pip install codecov)
+# Upload to codecov.io
+- ps: $(python -m codecov -f Coverage.xml -X gcov)
