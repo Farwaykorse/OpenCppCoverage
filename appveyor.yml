@@ -18,7 +18,6 @@ skip_commits:
   - '**/*.filters'
 
 cache:
-- C:\Tools\vcpkg\installed #-> appveyor.yml # Delete cache on change
 - C:\Tools\vcpkg\vcpkg.exe
 
 image:
@@ -29,14 +28,23 @@ platform:
 - x64
 
 configuration:
-- Debug
 - Release
+- Debug
 
 environment:
   matrix:
-  - DEPENDENCIES: HEAD
-    NUGET: on
-  - DEPENDENCIES: FREEZE
+  - BUILD: dependency-zip
+  - configuration: Release
+  - configuration: Debug
+  #- BUILD: dependency-zip
+  #  DEPENDENCIES: FREEZE
+  #  NUGET: on
+  #- configuration: Release
+  #  DEPENDENCIES: FREEZE
+  #  NUGET: on
+  #- configuration: Debug
+  #  DEPENDENCIES: FREEZE
+  #  NUGET: on
   global:
     APPVEYOR_SAVE_CACHE_ON_ERROR: true
     TOOLCHAIN_FILE: 'C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake'
@@ -47,11 +55,19 @@ for:
 -
   matrix:
     only:
-    - NUGET: on
-  cache:
-  - C:\Tools\vcpkg\installed #-> appveyor.yml
-  - C:\Tools\vcpkg\packages #-> appveyor.yml
-  - C:\Tools\vcpkg\vcpkg.exe
+    - BUILD: dependency-zip
+  build_script:
+  - ps: Write-Warning 'Skipping build_script.'
+  test_script:
+  - ps: Write-Warning 'Skipping test_script.'
+  on_success:
+  - ps: |
+      Write-Output "Creating ${dependency_zip_name}"
+      7z u -bso0 -- ${dependency_zip_name} "C:\Tools\vcpkg\installed"
+      if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
+        7z u -bso0 -- ${dependency_zip_name} "C:\Tools\vcpkg\packages"
+      }
+      Push-AppveyorArtifact ${dependency_zip_name}
 
 
 install:
@@ -78,41 +94,86 @@ install:
       'range-v3'
     )
     $packages = $packages.ForEach({ "${_}:${env:PLATFORM}-windows" })
-# Install latest version of vcpkg.exe
-- cd C:\Tools\vcpkg && git pull --quiet
+# Shared Dependency Cache (as Artifact)
 - ps: |
-    if ( $(vcpkg upgrade) -match "^Warning: Different source.*for vcpkg" ) {
-      .\bootstrap-vcpkg.bat 1>$null
-      vcpkg integrate install 1>$null
+    $dependency_zip_name = "dependency_${env:PLATFORM}"
+    if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
+      $dependency_zip_name += '_nuget'
     }
-# Use a frozen vcpkg state for all dependencies
+    if ( -not $env:DEPENDENCIES -or "${env:DEPENDENCIES}" -ne "FREEZE" ) {
+      $dependency_zip_name += '_HEAD'
+    }
+    $dependency_zip_name += ".zip"
+    Write-Output "Artifact: ${dependency_zip_name}"
 - ps: |
-    if ( "$env:DEPENDENCIES" -eq "FREEZE" ) {
-      git checkout $env:FREEZE_SHA1 --quiet
-      git show --summary
+    if ( -not $Flush_Artifact ) {
+      Write-Output "Try downloading artifact ..."
+      $api_url = 'https://ci.appveyor.com/api'
+      $account = "${env:APPVEYOR_ACCOUNT_NAME}"
+      $project = "${env:APPVEYOR_PROJECT_SLUG}"
+      $headers = @{ "Authorization" = "Bearer ${api_token}" }
+      $url_project  = "${api_url}/projects/${account}/${project}"
+      $url_zip_file = "${url_project}/artifacts/${dependency_zip_name}"
+      $(Invoke-RestMethod -Uri "${url_zip_file}" `
+        -Method Get -DisableKeepAlive -TimeoutSec 300 `
+        -Headers ${headers} `
+        -ContentType 'application/zip, application/octet-stream' `
+        -OutFile $dependency_zip_name
+      )
+      if ([IO.File]::Exists("${pwd}\${dependency_zip_name}")) {
+        Write-Output "-- Download done`n-- Extracting ..."
+        7z x -y -bso0 $dependency_zip_name -o"C:\Tools\vcpkg"
+        Write-Output '-- Extracting ... done'
+      } elseif ( -not $env:BUILD -or "${env:Build}" -ne "dependency-zip" ) {
+        Write-Error 'Artifact not found.'
+      } elseif ( "${env:CONFIGURATION}" -eq "Debug" ) {
+        Write-Error 'Artifact not found. Run release build before debug.'
+      } else {
+        Write-Output 'Artifact not found. Rebuilding all dependencies.'
+      }
     }
-# Only build Release or Debug versions (for most packages)
+# Build dependencies
 - ps: |
-    if ( "$env:CONFIGURATION" -eq "Release") {
-      $triplet_build = 'set(VCPKG_BUILD_TYPE release)'
-    } else {
-      $triplet_build = 'set(VCPKG_BUILD_TYPE debug)'
+    if ( $env:BUILD -and "$env:Build" -eq "dependency-zip" ) {
+      Write-Output "Install / update dependencies.`n-- Update vcpkg ..."
+      pushd C:\Tools\vcpkg; git pull --quiet
+      if ( $(vcpkg upgrade) -match "^Warning: Different source.*for vcpkg" ) {
+        Write-Output '-- Rebuilding vcpkg...'
+        .\bootstrap-vcpkg.bat 1>$null
+        vcpkg integrate install 1>$null
+        Write-Output '-- Rebuilding vcpkg... done'
+      }
+      if ( "$env:DEPENDENCIES" -eq "FREEZE" ) {
+        Write-Output '-- Using frozen dependency versions.'
+        git checkout $env:FREEZE_SHA1 --quiet
+        git show --summary
+      } else { Write-Output '-- Using dependencies from vcpkg HEAD.'}
+      if ( "$env:CONFIGURATION" -eq "Release") {
+        Write-Output '-- Only build Release configuration'
+        $triplet_build = 'set(VCPKG_BUILD_TYPE release)'
+      } else {
+        Write-Output '-- Only build Debug configuration'
+        $triplet_build = 'set(VCPKG_BUILD_TYPE debug)'
+      }
+      $triplet_file = ".\triplets\${env:PLATFORM}-windows.cmake"
+      $triplet_build | Out-File ${triplet_file} -Encoding ascii -Append
+      popd
     }
-    $triplet_file = ".\triplets\${env:PLATFORM}-windows.cmake"
-    $triplet_build | Out-File ${triplet_file} -Encoding ascii -Append
 # Display cache state
 - vcpkg list
-- vcpkg update
-# Updating cached dependencies
 - ps: |
-    if (!($(vcpkg upgrade) -match "^All installed packages are up-to-date")) {
-      vcpkg upgrade --no-dry-run
+    if ( $env:BUILD -and "$env:Build" -eq "dependency-zip" ) {
+      vcpkg update
+      if (!($(vcpkg upgrade) -match "^All installed packages are up-to-date")) {
+        vcpkg upgrade --no-dry-run
+      }
+      foreach ($item in $packages) {
+        vcpkg install $item
+      }
     }
-# Install new dependencies
-- ps: |
-    foreach ($item in $packages) {
-      vcpkg install $item
-    }
+
+before_build:
+- ps: cd ${env:APPVEYOR_BUILD_FOLDER}
 # Create or fake a NuGet package
 - ps: |
     if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
@@ -128,10 +189,6 @@ install:
       cmd /c mklink /j "tools" "C:\Tools\vcpkg\installed\${env:PLATFORM}-windows\tools"
       popd
     }
-
-
-before_build:
-- ps: cd ${env:APPVEYOR_BUILD_FOLDER}
 
 build_script:
 - >-
