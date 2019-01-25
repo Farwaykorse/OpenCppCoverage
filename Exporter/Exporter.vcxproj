@@ -118,7 +118,7 @@
       <Command>if not exist "$(OutDir)Template" mkdir "$(OutDir)Template" &amp;&amp; xcopy /s /y "$(ProjectDir)Html\Template" "$(OutDir)Template"</Command>
     </PostBuildEvent>
     <PreBuildEvent>
-      <Command>"$(SolutionDir)packages\thirdparty.1.2.0\installed\x86-windows\tools\protobuf\protoc.exe" -I="$(ProjectDir)Binary" --cpp_out="$(ProjectDir)Binary" "$(ProjectDir)Binary\CoverageData.proto"</Command>
+      <Command>"$(SolutionDir)packages\thirdparty.1.2.0\installed\x64-windows\tools\protobuf\protoc.exe" -I="$(ProjectDir)Binary" --cpp_out="$(ProjectDir)Binary" "$(ProjectDir)Binary\CoverageData.proto"</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -168,7 +168,7 @@
       <Command>if not exist "$(OutDir)Template" mkdir "$(OutDir)Template" &amp;&amp; xcopy /s /y "$(ProjectDir)Html\Template" "$(OutDir)Template"</Command>
     </PostBuildEvent>
     <PreBuildEvent>
-      <Command>"$(SolutionDir)packages\thirdparty.1.2.0\installed\x86-windows\tools\protobuf\protoc.exe" -I="$(ProjectDir)Binary" --cpp_out="$(ProjectDir)Binary" "$(ProjectDir)Binary\CoverageData.proto"</Command>
+      <Command>"$(SolutionDir)packages\thirdparty.1.2.0\installed\x64-windows\tools\protobuf\protoc.exe" -I="$(ProjectDir)Binary" --cpp_out="$(ProjectDir)Binary" "$(ProjectDir)Binary\CoverageData.proto"</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
