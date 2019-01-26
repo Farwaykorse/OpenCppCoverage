@@ -269,15 +269,15 @@ install:
         git checkout $env:FREEZE_SHA1 --quiet
         git show --summary
       } else { Write-Output '-- Using dependencies from vcpkg HEAD.'}
-      if ( "$env:CONFIGURATION" -eq "Release") {
-        Write-Output '-- Only build Release configuration'
-        $triplet_build = 'set(VCPKG_BUILD_TYPE release)'
-      } else {
-        Write-Output '-- Only build Debug configuration'
-        $triplet_build = 'set(VCPKG_BUILD_TYPE debug)'
-      }
-      $triplet_file = ".\triplets\${env:PLATFORM}-windows.cmake"
-      $triplet_build | Out-File ${triplet_file} -Encoding ascii -Append
+      #if ( "$env:CONFIGURATION" -eq "Release") {
+      #  Write-Output '-- Only build Release configuration'
+      #  $triplet_build = 'set(VCPKG_BUILD_TYPE release)'
+      #} else {
+      #  Write-Output '-- Only build Debug configuration'
+      #  $triplet_build = 'set(VCPKG_BUILD_TYPE debug)'
+      #}
+      #$triplet_file = ".\triplets\${env:PLATFORM}-windows.cmake"
+      #$triplet_build | Out-File ${triplet_file} -Encoding ascii -Append
       popd
     }
 # Display cache state
