@@ -48,7 +48,7 @@ environment:
   global:
     APPVEYOR_SAVE_CACHE_ON_ERROR: true
     TOOLCHAIN_FILE: 'C:/Tools/vcpkg/scripts/buildsystems/vcpkg.cmake'
-    FREEZE_SHA1: 3d87ec6b9fbb07bd299367b6bc89c4a271567233
+    FREEZE_SHA1: 4c6950adcb4a442e24b43af6643720c41a80fdc8
     NUGET_version: 1.2.0
 
 for:
