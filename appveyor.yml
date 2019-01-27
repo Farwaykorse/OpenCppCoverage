@@ -27,22 +27,18 @@ platform:
 - x86
 - x64
 
-configuration:
-- Release
-- Debug
-
 environment:
   matrix:
   - BUILD: dependency-zip
-  - configuration: Release
   - configuration: Debug
+  - configuration: Release
   #- BUILD: dependency-zip
   #  DEPENDENCIES: FREEZE
   #  NUGET: on
-  #- configuration: Release
+  #- configuration: Debug
   #  DEPENDENCIES: FREEZE
   #  NUGET: on
-  #- configuration: Debug
+  #- configuration: Release
   #  DEPENDENCIES: FREEZE
   #  NUGET: on
   global:
@@ -92,6 +88,78 @@ for:
     on:
       APPVEYOR_REPO_TAG: true
 
+init:
+- ps: |
+    $dependency_zip_name = "dependency_${env:PLATFORM}"
+    if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
+      $dependency_zip_name += '_nuget'
+    }
+    if ( $env:DEPENDENCIES -and "${env:DEPENDENCIES}" -eq "FREEZE" ) {
+      $dependency_zip_name += "_v${env:NUGET_version}"
+      $jobname = 'Environment%3A%20BUILD%3Ddependency-zip%2C%20DEPENDENCIES%3DFREEZE%2C%20NUGET%3Don'
+    } else {
+      $dependency_zip_name += '_HEAD'
+      $jobname = 'Environment%3A%20BUILD%3Ddependency-zip'
+    }
+    $dependency_zip_name += ".zip"
+    Write-Output "Artifact name: ${dependency_zip_name}"
+    Write-Output "JobID:         ${env:APPVEYOR_JOB_ID}"
+- ps: |
+    Write-Output 'Reset previously compiled dependencies from artifact'
+    $api_url = 'https://ci.appveyor.com/api'
+    $url_project = "${api_url}/projects/${env:APPVEYOR_ACCOUNT_NAME}/${env:APPVEYOR_PROJECT_SLUG}"
+    if ( $env:BUILD -and "${env:Build}" -eq "dependency-zip" ) {
+      Write-Output '-- Get dependencies from previous build:'
+      $url_zip_file = "${url_project}/artifacts/${dependency_zip_name}"
+      $url_zip_file += "?job=${jobname}"
+    } else {
+      # Get dependency-zip from current build
+      $url_branch = "${url_project}/branch/${env:APPVEYOR_REPO_BRANCH}"
+      $($branchbuilds = Invoke-RestMethod "${url_branch}" `
+        -Method Get -DisableKeepAlive -TimeoutSec 300 `
+        -Headers @{ "Authorization" = "Bearer ${env:api_token}" } `
+        -ContentType 'application/json'
+        $success = $?
+      )
+      if ( $success ) {
+        if ( $branchbuilds.build.buildNumber -ne $env:APPVEYOR_BUILD_NUMBER) {
+          $out = 'API change: not returning current build in progress!'
+          $out += "`nExpected build: ${env:APPVEYOR_BUILD_NUMBER};"
+          $out += " received build: $($branchbuilds.build.buildNumber)"
+          Write-Warning $out
+        }
+        $jobId = ($branchbuilds.build.jobs | where {
+          $_.name -Match 'Build=dependency-zip' -and
+          $_.artifactsCount -ge 1 -and
+          -not ($env:DEPENDENCIES -match 'FREEZE' -xor $_.name -match 'FREEZE') -and
+          -not ($env:NUGET -match 'on' -xor $_.name -match 'NUGET=on')
+        }).jobId
+        if ( $jobId ) {
+          $url_zip_file =  "${api_url}/buildjobs/${jobId}/artifacts/${dependency_zip_name}"
+          Write-Output '-- Get dependencies from current build:'
+        } else { Write-Warning '-- Cannot find artifact for current configuration.' }
+      }
+    }
+    Write-Output "-- Downloading ...`n${url_zip_file}"
+    $(Invoke-RestMethod "${url_zip_file}" `
+      -Method Get -DisableKeepAlive -TimeoutSec 300 `
+      -Headers @{ "Authorization" = "Bearer ${env:api_token}" } `
+      -ContentType 'application/zip, application/octet-stream' `
+      -OutFile $dependency_zip_name
+      $success = $?
+    )
+    if ( $success ) {
+      Write-Output '-- Downloading ... done'
+      if ([IO.File]::Exists("${pwd}\${dependency_zip_name}")) {
+        Write-Output '-- Extracting ...'
+        7z x -y -bso0 $dependency_zip_name -o"C:\Tools\vcpkg"
+        Write-Output '-- Extracting ... done'
+      } else { Write-Error "${pwd}\${dependency_zip_name} does not exist!" }
+    } else {
+      Write-Output 'Reset previously compiled dependencies from artifact - failed'
+      Write-Output 'Rebuilding all dependencies'
+    }
+    Write-Output "${pwd}\${dependency_zip_name}"
 
 install:
 # Packages to install from vcpkg:
@@ -117,44 +185,6 @@ install:
       'range-v3'
     )
     $packages = $packages.ForEach({ "${_}:${env:PLATFORM}-windows" })
-# Shared Dependency Cache (as Artifact)
-- ps: |
-    $dependency_zip_name = "dependency_${env:PLATFORM}"
-    if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
-      $dependency_zip_name += '_nuget'
-    }
-    if ( -not $env:DEPENDENCIES -or "${env:DEPENDENCIES}" -ne "FREEZE" ) {
-      $dependency_zip_name += '_HEAD'
-    }
-    $dependency_zip_name += ".zip"
-    Write-Output "Artifact: ${dependency_zip_name}"
-- ps: |
-    if ( -not $Flush_Artifact ) {
-      Write-Output "Try downloading artifact ..."
-      $api_url = 'https://ci.appveyor.com/api'
-      $account = "${env:APPVEYOR_ACCOUNT_NAME}"
-      $project = "${env:APPVEYOR_PROJECT_SLUG}"
-      $headers = @{ "Authorization" = "Bearer ${api_token}" }
-      $url_project  = "${api_url}/projects/${account}/${project}"
-      $url_zip_file = "${url_project}/artifacts/${dependency_zip_name}"
-      $(Invoke-RestMethod -Uri "${url_zip_file}" `
-        -Method Get -DisableKeepAlive -TimeoutSec 300 `
-        -Headers ${headers} `
-        -ContentType 'application/zip, application/octet-stream' `
-        -OutFile $dependency_zip_name
-      )
-      if ([IO.File]::Exists("${pwd}\${dependency_zip_name}")) {
-        Write-Output "-- Download done`n-- Extracting ..."
-        7z x -y -bso0 $dependency_zip_name -o"C:\Tools\vcpkg"
-        Write-Output '-- Extracting ... done'
-      } elseif ( -not $env:BUILD -or "${env:Build}" -ne "dependency-zip" ) {
-        Write-Error 'Artifact not found.'
-      } elseif ( "${env:CONFIGURATION}" -eq "Debug" ) {
-        Write-Error 'Artifact not found. Run release build before debug.'
-      } else {
-        Write-Output 'Artifact not found. Rebuilding all dependencies.'
-      }
-    }
 # Build dependencies
 - ps: |
     if ( $env:BUILD -and "$env:Build" -eq "dependency-zip" ) {
