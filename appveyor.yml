@@ -56,8 +56,12 @@ for:
   matrix:
     only:
     - BUILD: dependency-zip
+  before_build:
+  - ps: Write-Warning 'Skipping before_build.'
   build_script:
   - ps: Write-Warning 'Skipping build_script.'
+  before_test:
+  - ps: Write-Warning 'Skipping before_test.'
   test_script:
   - ps: Write-Warning 'Skipping test_script.'
   on_success:
@@ -68,6 +72,25 @@ for:
         7z u -bso0 -- ${dependency_zip_name} "C:\Tools\vcpkg\packages"
       }
       Push-AppveyorArtifact ${dependency_zip_name}
+-
+  matrix:
+   only:
+   - configuration: Release
+     NUGET: on
+  artifacts:
+  - path: '*.nupkg'
+    name: Dependencies-%PLATFORM%-%NUGET_version%
+    type: NuGetPackage
+  deploy:
+  - provider: GitHub
+    description: ''
+    auth_token:
+      secure: RPBFZIxYFlcAhSb7iwr1gaBzXC3xaZSI3InJD4eSL8/pYi0YQEhll7qx5tb3xEib
+    artifact: /.*\.nupkg/
+    draft: true
+    prerelease: true
+    on:
+      APPVEYOR_REPO_TAG: true
 
 
 install:
@@ -180,6 +203,7 @@ before_build:
       vcpkg export ${packages} --nuget --nuget-id=ThirdParty --nuget-version=${env:NUGET_version}
       $(nuget) | Select-Object -First 1 # display version
       nuget install ThirdParty -Source C:\Tools\vcpkg -OutputDirectory ${env:APPVEYOR_BUILD_FOLDER}\packages
+      mv C:\Tools\vcpkg\*.nupkg ${env:APPVEYOR_BUILD_FOLDER}
     } else {
       $dir = "${env:APPVEYOR_BUILD_FOLDER}\packages\thirdparty.${env:NUGET_version}"
       mkdir "${dir}\build\native" | pushd
@@ -199,8 +223,9 @@ build_script:
   -p:Platform="%PLATFORM%"
   -logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
 
-test_script:
+before_test:
 - ps: |
+    Write-Output '-- Test configuration'
     $gtest_list = @(
       'ToolsTest.exe',
       'FileFilterTest.exe',
@@ -238,12 +263,16 @@ test_script:
     if (! $TestAdapterPath) { Write-Error "Can't find GoogleTestAdapter." }
     $runsettings = "${env:APPVEYOR_BUILD_FOLDER}\GoogleTestAdapter.runsettings"
 
+test_script:
+- ps: |
+    Write-Output '-- Run tests...'
     foreach ($exec in $gtest_path_list) {
       VSTest.Console "${exec}" /TestAdapterPath:"${TestAdapterPath}" /Settings:"${runsettings}" /logger:Appveyor
     }
     foreach ($exec in $mstest_path_list) {
       VSTest.Console "${exec}" /logger:Appveyor
     }
+    Write-Output '-- Run tests... done'
 
 on_success:
 - cd %APPVEYOR_BUILD_FOLDER%
