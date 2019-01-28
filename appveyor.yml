@@ -1,6 +1,5 @@
 ##====---- appveyor.yml                                               ----====##
 # CI for OpenCppCoverage.
-# Nuget generation is just to be compatible with the default project files.
 #
 
 # fetch repository as a zip archive
@@ -56,6 +55,8 @@ for:
   - ps: Write-Warning 'Skipping before_build.'
   build_script:
   - ps: Write-Warning 'Skipping build_script.'
+  after_build:
+  - ps: Write-Warning 'Skipping after_build.'
   before_test:
   - ps: Write-Warning 'Skipping before_test.'
   test_script:
@@ -96,6 +97,7 @@ for:
       APPVEYOR_REPO_TAG: true
 
 init:
+# Collect AppVeyor Artifact of previously compiled dependencies.
 - ps: |
     $time_limit = (Get-Date) + $(New-TimeSpan -Minutes 45)
 - ps: |
@@ -164,7 +166,7 @@ init:
     if ( $env:BUILD -and "${env:Build}" -eq "dependency-zip" ) {
       Write-Output '-- Get dependencies from previous build:'
       $url_zip_file = "${url_project}/artifacts/${dependency_zip_name}"
-      $url_zip_file += "?job=${jobname}"
+      $url_zip_file += "?all=true&job=${jobname}"
     } else {
       # Get dependency-zip from current build
       $url_branch = "${url_project}/branch/${env:APPVEYOR_REPO_BRANCH}"
@@ -318,6 +320,38 @@ build_script:
   -p:Platform="%PLATFORM%"
   -logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
 
+after_build:
+# Collect files for distribution archive
+- ps: |
+    pushd ${env:APPVEYOR_BUILD_FOLDER}
+    if ( "${env:PLATFORM}" -eq "x64") {
+      $dir = "${pwd}\x64\${env:CONFIGURATION}"
+    } else {
+      $dir = "${pwd}\${env:CONFIGURATION}"
+    }
+    ls $dir
+    mkdir .\program *>$null
+    Copy-Item @(
+      "OpenCppCoverage.exe",
+      "boost_*.dll",
+      'bz2*.dll',         # bz2[d].dll
+      'CppCoverage.dll',
+      'Exporter.dll',
+      'FileFilter.dll',
+      'msdia140.dll',
+      'libbz2*.dll',      # libbz2[d].dll
+      'libctemplate.dll',
+      'libprotobuf*.dll', # libprotobuf[d].dll
+      'libctemplate.dll',
+      'lzma.dll',
+      'Tools.dll',
+      'zlib*1.dll',       # zlib[d]1.dll
+      'zstd*.dll'         # zstd[d].dll
+    ).ForEach({ "${dir}\$_" }) -Destination .\program
+    Copy-Item "${dir}\Template" .\program -Recurse
+    $OpenCppCoverage_exe = "${pwd}\program\OpenCppCoverage.exe"
+    popd
+
 before_test:
 - ps: |
     Write-Output '-- Test configuration'
@@ -338,7 +372,6 @@ before_test:
       $mstest_path_list = $mstest_list.ForEach({
         "${env:APPVEYOR_BUILD_FOLDER}\${env:PLATFORM}\${env:CONFIGURATION}\${_}"
       })
-      $OpenCppCoverage_exe = "${env:APPVEYOR_BUILD_FOLDER}\${env:PLATFORM}\${env:CONFIGURATION}\OpenCppCoverage.exe"
     } else {
       $gtest_path_list = $gtest_path_list.ForEach({
         "${env:APPVEYOR_BUILD_FOLDER}\${env:CONFIGURATION}\${_}"
