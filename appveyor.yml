@@ -179,24 +179,24 @@ init:
 install:
 # Packages to install from vcpkg:
 - ps: |
-    $packages = @(
+    $packages = @( # Sorted to build in separate sets.
       'poco',
       'protobuf',
       'gtest',
       'ctemplate',
       'boost-optional',
-      'boost-filesystem',
-      'boost-algorithm',
-      'boost-container',
-      'boost-program-options',
       'boost-regex',
       'boost-range',
-      'boost-log',
-      'boost-property-tree',
-      'boost-spirit',
-      'boost-uuid',
+      'boost-filesystem',
+      'boost-container',
+      'boost-algorithm',
+      'boost-program-options',
       'boost-locale',
       'boost-iostreams',
+      'boost-spirit',
+      'boost-property-tree',
+      'boost-log',
+      'boost-uuid',
       'range-v3'
     )
     $packages = $packages.ForEach({ "${_}:${env:PLATFORM}-windows" })
