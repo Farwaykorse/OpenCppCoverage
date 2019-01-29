@@ -70,9 +70,9 @@ for:
       if ( $archive_incomplete ) {
         New-Item archive_incomplete
         7z u -bso0 -- ${dependency_zip_name} ".\archive_incomplete"
-        Write-Warning "Dependency archive is incomplete.
-          Not all dependencies have been build. Expect increased build times.
-          The archive will be completed during the next build."
+        Warning -Message 'Dependency archive is incomplete.' -Details `
+          'Not all dependencies have been build. Expect increased build times.',
+          'The archive will be completed during the next build.' -NewLine
       }
       Push-AppveyorArtifact ${dependency_zip_name}
 -
@@ -114,9 +114,53 @@ init:
     Write-Output "Artifact name: ${dependency_zip_name}"
     Write-Output "JobID:         ${env:APPVEYOR_JOB_ID}"
 - ps: |
-    Write-Output 'Reset previously compiled dependencies from artifact'
+    function Send-Output {
+      param([parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
+        [alias('m')][String]$Message,
+        [parameter(Position=1,ValueFromPipeline=$true,ValueFromRemainingArguments=$true)]
+        [alias('d')][String[]]$Details,[alias('hide','h')][Switch]$HideDetails,
+        [alias('n','NewLine')][Switch]$SeparateLines,
+        [Switch]$Error,[Switch]$Warning,[Switch]$Info
+      )
+      if ($Details) {
+        $Details = $(
+          if ($SeparateLines) { $Details -join "`n" } else { $Details -join ' ' }
+        ) -replace "`n [^\s]", "`n"
+      }
+      if ($env:APPVEYOR) { 
+        $AppVeyor = 'Add-AppveyorMessage ${Message} -Category '
+        if       ($Error)   { $AppVeyor += 'Error'
+        } elseif ($Warning) { $AppVeyor += 'Warning'
+        } else              { $AppVeyor += 'Information' }
+        if ($Details) { $AppVeyor += ' -Details $Details' }
+        Invoke-Expression -Command $AppVeyor
+      }
+      if ($Error) {
+        Write-Host $Message -ForegroundColor White -BackgroundColor Red
+        if ($Details -and -not $HideDetails) { Write-Host $Details -ForegroundColor Red }
+        if ($env:APPVEYOR -and -not $ContinueOnError) { $Host.SetShouldExit(1) }
+      } elseif ($Warning) {
+        if ($Details -and -not $HideDetails) { $Message += "`n${Details}" }
+        Write-Warning $Message
+      } else {
+        if ($Details -and -not $HideDetails) {
+          $Message += "`n$("-- $Details" -replace "`n", "`n-- ")"
+        }
+        Write-Output "INFO: $Message"
+      }
+    } # /function Send-Output
+    function Error   { Send-Output @Args -Error }
+    function Warning { Send-Output @Args -Warning }
+    function Info    { Send-Output @Args -Info }
+- ps: |
+    Write-Output 'Collect previously compiled dependencies'
     $api_url = 'https://ci.appveyor.com/api'
     $url_project = "${api_url}/projects/${env:APPVEYOR_ACCOUNT_NAME}/${env:APPVEYOR_PROJECT_SLUG}"
+    if ( -not $env:api_token ) {
+      Error 'AppVeyor API-token not found!' `
+        -Details 'Set the environment variable "api_token" ',
+        'in the AppVeyor project settings. (🔒 With variable encription.)'
+    }
     if ( $env:BUILD -and "${env:Build}" -eq "dependency-zip" ) {
       Write-Output '-- Get dependencies from previous build:'
       $url_zip_file = "${url_project}/artifacts/${dependency_zip_name}"
@@ -132,10 +176,9 @@ init:
       )
       if ( $success ) {
         if ( $branchbuilds.build.buildNumber -ne $env:APPVEYOR_BUILD_NUMBER) {
-          $out = 'API change: not returning current build in progress!'
-          $out += "`nExpected build: ${env:APPVEYOR_BUILD_NUMBER};"
-          $out += " received build: $($branchbuilds.build.buildNumber)"
-          Write-Warning $out
+          Warning 'API change: not returning current build in progress!' `
+            -Details "Expected build: ${env:APPVEYOR_BUILD_NUMBER}",
+            "Received build: $($branchbuilds.build.buildNumber)" -NewLine
         }
         $jobId = ($branchbuilds.build.jobs | where {
           $_.name -Match 'Build=dependency-zip' -and
@@ -144,9 +187,11 @@ init:
           -not ($env:NUGET -match 'on' -xor $_.name -match 'NUGET=on')
         }).jobId
         if ( $jobId ) {
-          $url_zip_file =  "${api_url}/buildjobs/${jobId}/artifacts/${dependency_zip_name}"
+          $url_zip_file = "${api_url}/buildjobs/${jobId}/artifacts/${dependency_zip_name}"
           Write-Output '-- Get dependencies from current build:'
-        } else { Write-Warning '-- Cannot find artifact for current configuration.' }
+        } else {
+          Warning 'Cannot find artifact for current configuration.'
+        }
       }
     }
     Write-Output "-- Downloading ...`n${url_zip_file}"
@@ -165,14 +210,14 @@ init:
         Write-Output '-- Extracting ... done'
         if ( Test-Path 'C:\Tools\vcpkg\archive_incomplete' ) {
           $archive_incomplete = $true
-          Write-Warning 'Dependency archive is incomplete. Increased build time.'
+          Warning 'Dependency archive is incomplete. Increased build time.'
           rm 'C:\Tools\vcpkg\archive_incomplete'
           7z d -bso0 -- ${dependency_zip_name} "archive_incomplete"
         }
-      } else { Write-Error "${pwd}\${dependency_zip_name} does not exist!" }
+      } else { Error "${pwd}\${dependency_zip_name} does not exist!" }
     } else {
-      Write-Output 'Reset previously compiled dependencies from artifact - failed'
-      Write-Output 'Rebuilding all dependencies'
+      Info 'Reset previously compiled dependencies from artifact - failed' `
+        -Details 'Rebuilding all dependencies'
     }
     Write-Output "${pwd}\${dependency_zip_name}"
 
@@ -304,13 +349,16 @@ before_test:
     }
     if ("$env:APPVEYOR_BUILD_WORKER_IMAGE" -match "Visual Studio 2017") {
       $extensions = "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\Common7\IDE\Extensions\"
+    } else {
+      Error 'Only testing on VS 2017 supported!' `
+        -Details 'Add path to Google Test Adapter in AppVeyor.yml ($extensions).'
     }
     $TestAdapterPath = (
       Get-ChildItem -Path ${extensions} -Recurse |
       Where-Object { $_.Name -eq 'GoogleTestAdapter.TestAdapter.dll' } |
       Select-Object -First 1
     ).DirectoryName
-    if (! $TestAdapterPath) { Write-Error "Can't find GoogleTestAdapter." }
+    if (! $TestAdapterPath) { Error "Can't find GoogleTestAdapter." }
     $runsettings = "${env:APPVEYOR_BUILD_FOLDER}\GoogleTestAdapter.runsettings"
 
 test_script:
