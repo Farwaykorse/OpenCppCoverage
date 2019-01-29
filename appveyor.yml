@@ -67,6 +67,13 @@ for:
       if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
         7z u -bso0 -- ${dependency_zip_name} "C:\Tools\vcpkg\packages"
       }
+      if ( $archive_incomplete ) {
+        New-Item archive_incomplete
+        7z u -bso0 -- ${dependency_zip_name} ".\archive_incomplete"
+        Write-Warning "Dependency archive is incomplete.
+          Not all dependencies have been build. Expect increased build times.
+          The archive will be completed during the next build."
+      }
       Push-AppveyorArtifact ${dependency_zip_name}
 -
   matrix:
@@ -89,6 +96,8 @@ for:
       APPVEYOR_REPO_TAG: true
 
 init:
+- ps: |
+    $time_limit = (Get-Date) + $(New-TimeSpan -Minutes 45)
 - ps: |
     $dependency_zip_name = "dependency_${env:PLATFORM}"
     if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
@@ -154,6 +163,12 @@ init:
         Write-Output '-- Extracting ...'
         7z x -y -bso0 $dependency_zip_name -o"C:\Tools\vcpkg"
         Write-Output '-- Extracting ... done'
+        if ( Test-Path 'C:\Tools\vcpkg\archive_incomplete' ) {
+          $archive_incomplete = $true
+          Write-Warning 'Dependency archive is incomplete. Increased build time.'
+          rm 'C:\Tools\vcpkg\archive_incomplete'
+          7z d -bso0 -- ${dependency_zip_name} "archive_incomplete"
+        }
       } else { Write-Error "${pwd}\${dependency_zip_name} does not exist!" }
     } else {
       Write-Output 'Reset previously compiled dependencies from artifact - failed'
@@ -187,7 +202,7 @@ install:
     $packages = $packages.ForEach({ "${_}:${env:PLATFORM}-windows" })
 # Build dependencies
 - ps: |
-    if ( $env:BUILD -and "$env:Build" -eq "dependency-zip" ) {
+    if ( $archive_incomplete -or ($env:BUILD -and "$env:Build" -eq "dependency-zip") ) {
       Write-Output "Install / update dependencies.`n-- Update vcpkg ..."
       pushd C:\Tools\vcpkg; git pull --quiet
       if ( $(vcpkg upgrade) -match "^Warning: Different source.*for vcpkg" ) {
@@ -215,14 +230,19 @@ install:
 # Display cache state
 - vcpkg list
 - ps: |
-    if ( $env:BUILD -and "$env:Build" -eq "dependency-zip" ) {
+    if ( $archive_incomplete -or ($env:BUILD -and "$env:Build" -eq "dependency-zip") ) {
+      $archive_incomplete = $false
       vcpkg update
       if (!($(vcpkg upgrade) -match "^All installed packages are up-to-date")) {
         vcpkg upgrade --no-dry-run
       }
       foreach ($item in $packages) {
-        vcpkg install $item
+        if ( (Get-Date) -lt $time_limit ) {
+          vcpkg install $item
+          Write-Output "Time remaining: $($time_limit - (Get-Date))"
+        } else { $archive_incomplete = $true; break }
       }
+      if ( $archive_incomplete ) { Exit-AppveyorBuild }
     }
 
 before_build:
