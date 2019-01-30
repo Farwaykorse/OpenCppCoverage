@@ -102,6 +102,7 @@ init:
     $time_limit = (Get-Date) + $(New-TimeSpan -Minutes 45)
 - ps: |
     $dependency_zip_name = "dependency_${env:PLATFORM}"
+    $env:redist_name = "OpenCppCoverage-${env:PLATFORM}"
     if ( $env:NUGET -and "$env:NUGET" -eq "on" ) {
       $dependency_zip_name += '_nuget'
     }
@@ -110,11 +111,16 @@ init:
       $jobname = 'Environment%3A%20BUILD%3Ddependency-zip%2C%20DEPENDENCIES%3DFREEZE%2C%20NUGET%3Don'
     } else {
       $dependency_zip_name += '_HEAD'
+      $env:redist_name += '_HEAD'
       $jobname = 'Environment%3A%20BUILD%3Ddependency-zip'
     }
+    if ( "${env:APPVEYOR_REPO_TAG}" -eq "true" ) {
+      $env:redist_name += '-'+$($env:APPVEYOR_REPO_TAG_NAME).Replace('release-','')
+    }
     $dependency_zip_name += ".zip"
-    Write-Output "Artifact name: ${dependency_zip_name}"
-    Write-Output "JobID:         ${env:APPVEYOR_JOB_ID}"
+    Write-Output ("Artifact name: ${dependency_zip_name}`n"+`
+      "Redist. name:  ${env:redist_name}`nJobID:         ${env:APPVEYOR_JOB_ID}"
+    )
 - ps: |
     function Send-Output {
       param([parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
@@ -323,14 +329,13 @@ build_script:
 after_build:
 # Collect files for distribution archive
 - ps: |
-    pushd ${env:APPVEYOR_BUILD_FOLDER}
+    cd ${env:APPVEYOR_BUILD_FOLDER}
     if ( "${env:PLATFORM}" -eq "x64") {
       $dir = "${pwd}\x64\${env:CONFIGURATION}"
     } else {
       $dir = "${pwd}\${env:CONFIGURATION}"
     }
-    ls $dir
-    mkdir .\program *>$null
+    mkdir .\archive\OpenCppCoverage *>$null
     Copy-Item @(
       "OpenCppCoverage.exe",
       "boost_*.dll",
@@ -347,9 +352,13 @@ after_build:
       'Tools.dll',
       'zlib*1.dll',       # zlib[d]1.dll
       'zstd*.dll'         # zstd[d].dll
-    ).ForEach({ "${dir}\$_" }) -Destination .\program
-    Copy-Item "${dir}\Template" .\program -Recurse
-    $OpenCppCoverage_exe = "${pwd}\program\OpenCppCoverage.exe"
+    ).ForEach({ "${dir}\$_" }) -Destination .\archive\OpenCppCoverage
+    Copy-Item "${dir}\Template" .\archive\OpenCppCoverage -Recurse
+    $OpenCppCoverage_exe = "${pwd}\archive\OpenCppCoverage\OpenCppCoverage.exe"
+    Write-Output '-- Create archive...'
+    pushd .\archive
+    7z u -bso0 -- "..\${env:redist_name}.zip" OpenCppCoverage
+    Write-Output '-- Create archive... done'
     popd
 
 before_test:
@@ -404,6 +413,11 @@ test_script:
       VSTest.Console "${exec}" /logger:Appveyor
     }
     Write-Output '-- Run tests... done'
+
+artifacts:
+- name: OpenCppCoverage
+  path: "%redist_name%.zip"
+  type: zip
 
 on_success:
 - cd %APPVEYOR_BUILD_FOLDER%
