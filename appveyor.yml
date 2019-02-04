@@ -59,6 +59,8 @@ for:
   - ps: Write-Warning 'Skipping after_build.'
   before_test:
   - ps: Write-Warning 'Skipping before_test.'
+  after_test:
+  - ps: Write-Warning 'Skipping after_test.'
   test_script:
   - ps: Write-Warning 'Skipping test_script.'
   on_success:
@@ -76,25 +78,7 @@ for:
           'The archive will be completed during the next build.' -NewLine
       }
       Push-AppveyorArtifact ${dependency_zip_name}
--
-  matrix:
-   only:
-   - configuration: Release
-     NUGET: on
-  artifacts:
-  - path: '*.nupkg'
-    name: Dependencies-%PLATFORM%-%NUGET_version%
-    type: NuGetPackage
-  deploy:
-  - provider: GitHub
-    description: ''
-    auth_token:
-      secure: RPBFZIxYFlcAhSb7iwr1gaBzXC3xaZSI3InJD4eSL8/pYi0YQEhll7qx5tb3xEib
-    artifact: /.*\.nupkg/
-    draft: true
-    prerelease: true
-    on:
-      APPVEYOR_REPO_TAG: true
+
 
 init:
 # Collect AppVeyor Artifact of previously compiled dependencies.
@@ -306,7 +290,6 @@ before_build:
       vcpkg export ${packages} --nuget --nuget-id=ThirdParty --nuget-version=${env:NUGET_version}
       $(nuget) | Select-Object -First 1 # display version
       nuget install ThirdParty -Source C:\Tools\vcpkg -OutputDirectory ${env:APPVEYOR_BUILD_FOLDER}\packages
-      mv C:\Tools\vcpkg\*.nupkg ${env:APPVEYOR_BUILD_FOLDER}
     } else {
       $dir = "${env:APPVEYOR_BUILD_FOLDER}\packages\thirdparty.${env:NUGET_version}"
       mkdir "${dir}\build\native" | pushd
@@ -357,7 +340,7 @@ after_build:
     $OpenCppCoverage_exe = "${pwd}\archive\OpenCppCoverage\OpenCppCoverage.exe"
     Write-Output '-- Create archive...'
     pushd .\archive
-    7z u -bso0 -- "..\${env:redist_name}.zip" OpenCppCoverage
+    7z u -bso0 -- "${env:redist_name}.zip" OpenCppCoverage
     Write-Output '-- Create archive... done'
     popd
 
@@ -427,10 +410,60 @@ test_script:
     }
     Write-Output '-- Test for missing DLLs... done'
 
+after_test:
+# Make NuGet package & zip available as artifact, only when being deployed.
+- ps: |
+    pushd "${env:APPVEYOR_BUILD_FOLDER}"
+    if ( "$env:APPVEYOR_REPO_TAG" -eq "true" -and
+         "$env:CONFIGURATION" -eq "Release" -and
+         "$env:NUGET" -eq "on" -and "$env:DEPENDENCIES" -eq "FREEZE" ) {
+      mv C:\Tools\vcpkg\*.nupkg .\
+    }
+    if ( "$env:CONFIGURATION" -eq "Release") {
+      mv ".\archive\${env:redist_name}.zip" .\
+    }
+    Write-Output "-- NuGet packages: $((ls .\*.nupkg).Name)"
+    Write-Output "-- Zip archives: $((ls .\*.zip).Name)"
+    popd
+
 artifacts:
 - name: OpenCppCoverage
   path: "%redist_name%.zip"
   type: zip
+- name: Dependencies-%PLATFORM%-%NUGET_version%
+  path: '*.nupkg'
+  type: NuGetPackage
+
+deploy:
+- provider: GitHub
+  description: ''
+  auth_token:
+    secure: RPBFZIxYFlcAhSb7iwr1gaBzXC3xaZSI3InJD4eSL8/pYi0YQEhll7qx5tb3xEib
+  artifact: /.*\.nupkg|OpenCppCoverage.*\.zip/
+  draft: true
+  prerelease: true
+  on:
+    APPVEYOR_REPO_TAG: true
+    configuration: Release
+    NUGET: on
+    DEPENDENCIES: FREEZE
+
+- provider: GitHub
+  tag: latest
+  release: OpenCppCoverage - Unstable
+  description: |
+    Last successful build using the latest dependency versions.
+    Moving release considered unstable.
+  auth_token:
+    secure: RPBFZIxYFlcAhSb7iwr1gaBzXC3xaZSI3InJD4eSL8/pYi0YQEhll7qx5tb3xEib
+  artifact: /OpenCppCoverage.*HEAD\.zip/
+  draft: true
+  prerelease: true
+  force_update: true
+  on:
+    branch: master
+    configuration: Release
+
 
 on_success:
 - cd %APPVEYOR_BUILD_FOLDER%
