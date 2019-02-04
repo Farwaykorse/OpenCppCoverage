@@ -413,6 +413,19 @@ test_script:
       VSTest.Console "${exec}" /logger:Appveyor
     }
     Write-Output '-- Run tests... done'
+- ps: |
+    Write-Output '-- Test for missing DLLs...'
+    $result = $(Start-Process "${OpenCppCoverage_exe}" -PassThru)
+    Start-Sleep -Seconds 2 # Allow for Event manager to update
+    $( $item = Get-WinEvent -FilterHashtable @{LogName='System'
+        ProviderName='Application Popup'; StartTime=(Get-Date).AddMinutes(-1)
+      } -MaxEvents 1
+    ) *>$null
+    if ($item) {
+      Error 'Execution error' -Details 'Failed to run:',
+        ${OpenCppCoverage_exe}, $item.Message -NewLine
+    }
+    Write-Output '-- Test for missing DLLs... done'
 
 artifacts:
 - name: OpenCppCoverage
