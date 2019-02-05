@@ -92,11 +92,9 @@ init:
     }
     if ( $env:DEPENDENCIES -and "${env:DEPENDENCIES}" -eq "FREEZE" ) {
       $dependency_zip_name += "_v${env:NUGET_version}"
-      $jobname = 'Environment%3A%20BUILD%3Ddependency-zip%2C%20DEPENDENCIES%3DFREEZE%2C%20NUGET%3Don'
     } else {
       $dependency_zip_name += '_HEAD'
       $env:redist_name += '_HEAD'
-      $jobname = 'Environment%3A%20BUILD%3Ddependency-zip'
     }
     if ( "${env:APPVEYOR_REPO_TAG}" -eq "true" ) {
       $env:redist_name += '-'+$($env:APPVEYOR_REPO_TAG_NAME).Replace('release-','')
@@ -145,59 +143,90 @@ init:
     function Warning { Send-Output @Args -Warning }
     function Info    { Send-Output @Args -Info }
 - ps: |
-    Write-Output 'Collect previously compiled dependencies'
-    $api_url = 'https://ci.appveyor.com/api'
-    $url_project = "${api_url}/projects/${env:APPVEYOR_ACCOUNT_NAME}/${env:APPVEYOR_PROJECT_SLUG}"
-    if ( -not $env:api_token ) {
-      Error 'AppVeyor API-token not found!' `
-        -Details 'Set the environment variable "api_token" ',
-        'in the AppVeyor project settings. (🔒 With variable encription.)'
-    }
-    if ( $env:BUILD -and "${env:Build}" -eq "dependency-zip" ) {
-      Write-Output '-- Get dependencies from previous build:'
-      $url_zip_file = "${url_project}/artifacts/${dependency_zip_name}"
-      $url_zip_file += "?all=true&job=${jobname}"
-    } else {
-      # Get dependency-zip from current build
-      $url_branch = "${url_project}/branch/${env:APPVEYOR_REPO_BRANCH}"
-      $($branchbuilds = Invoke-RestMethod "${url_branch}" `
+    function Get-JSON {
+      param([parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]
+        [String]$URI
+      )
+      Invoke-RestMethod "${URI}" `
         -Method Get -DisableKeepAlive -TimeoutSec 300 `
         -Headers @{ "Authorization" = "Bearer ${env:api_token}" } `
         -ContentType 'application/json'
-        $success = $?
+    }
+    function Select-dependency-zip-jobId {
+      param(
+        [parameter(Mandatory=$true,Position=0,ValueFromPipeline=$true)]$Build
       )
-      if ( $success ) {
-        if ( $branchbuilds.build.buildNumber -ne $env:APPVEYOR_BUILD_NUMBER) {
-          Warning 'API change: not returning current build in progress!' `
-            -Details "Expected build: ${env:APPVEYOR_BUILD_NUMBER}",
-            "Received build: $($branchbuilds.build.buildNumber)" -NewLine
+      if (Get-Member -InputObject $Build -Name 'build' -MemberType Properties)
+      { $Build = $Build.build }
+      if (Get-Member -InputObject $Build -Name 'jobs' -MemberType Properties) { 
+        if (-not $Build.jobs.Count) { Warning 'Incompatible input; no jobs' `
+          -Details "Build Version: $($Build.version)",
+          'Possibly a build with a yml parsing error.' -n
         }
-        $jobId = ($branchbuilds.build.jobs | where {
-          $_.name -Match 'Build=dependency-zip' -and
-          $_.artifactsCount -ge 1 -and
-          -not ($env:DEPENDENCIES -match 'FREEZE' -xor $_.name -match 'FREEZE') -and
-          -not ($env:NUGET -match 'on' -xor $_.name -match 'NUGET=on')
-        }).jobId
-        if ( $jobId ) {
-          $url_zip_file = "${api_url}/buildjobs/${jobId}/artifacts/${dependency_zip_name}"
-          Write-Output '-- Get dependencies from current build:'
-        } else {
-          Warning 'Cannot find artifact for current configuration.'
+      } else { Error 'Incompatible input object' }
+      $job = $Build.jobs | where { $_.artifactsCount -ge 1 -and
+        $_.name -match 'Build=dependency-zip' -and $_.status -eq 'success' -and
+        -not ($env:DEPENDENCIES -match 'FREEZE' -xor $_.name -match 'FREEZE') -and
+        -not ($env:NUGET -match 'on' -xor $_.name -match 'NUGET=on') -and
+        -not ($_.name -match 'Platform: x86' -xor $env:PLATFORM -eq 'x86') -and 
+        -not ($_.name -match 'Platform: x64' -xor $env:PLATFORM -eq 'x64')
+      }
+      if ($job) { return $job[0].jobId }
+    }
+    Write-Output 'Collect previously compiled dependencies'
+    $api_url = 'https://ci.appveyor.com/api'
+    $url_project = "${api_url}/projects/${env:APPVEYOR_ACCOUNT_NAME}/${env:APPVEYOR_PROJECT_SLUG}"
+    $url_history = "${url_project}/history?recordsNumber=20"
+    if ( -not $env:api_token ) {
+      Error 'AppVeyor API-token not found!' `
+        -Details 'Set the environment variable "api_token" ',
+        'in the AppVeyor project settings. (🔒 With variable encryption.)'
+    }
+    if ( $env:BUILD -and "${env:Build}" -eq "dependency-zip" ) {
+      Write-Output '-- Get dependencies from previous build:'
+      $URI = @( "${url_history}&branch=${env:APPVEYOR_REPO_BRANCH}" )
+      if ( $env:APPVEYOR_REPO_BRANCH -ne 'master') {
+        $URI += "${url_history}&branch=master"
+      }
+      :lbl_URI foreach ($_ in $URI) {
+        $history = Get-JSON -URI "$_"
+        if ($history -eq $null) { continue }
+        foreach ($build in $history.builds) {
+          $jobId = Get-JSON -URI "${url_project}/build/$($build.version)" |
+            Select-dependency-zip-jobId
+          if ($jobId -ne $null) { echo $jobId; break lbl_URI }
         }
       }
+    } else {
+      Write-Output '-- Get dependencies from current build:'
+      $url_branch = "${url_project}/branch/${env:APPVEYOR_REPO_BRANCH}"
+      $branchBuilds = Get-JSON -URI $url_branch
+      if ( $branchBuilds ) {
+        if ( $branchBuilds.build.buildNumber -ne $env:APPVEYOR_BUILD_NUMBER) {
+          Warning 'API change: not returning current build in progress!' `
+            -Details "Expected build: ${env:APPVEYOR_BUILD_NUMBER}",
+            "Received build: $($branchBuilds.build.buildNumber)" -NewLine
+        }
+        $jobId = Select-dependency-zip-jobId $branchBuilds
+      }
     }
-    Write-Output "-- Downloading ...`n${url_zip_file}"
-    $(Invoke-RestMethod "${url_zip_file}" `
-      -Method Get -DisableKeepAlive -TimeoutSec 300 `
-      -Headers @{ "Authorization" = "Bearer ${env:api_token}" } `
-      -ContentType 'application/zip, application/octet-stream' `
-      -OutFile $dependency_zip_name
-      $success = $?
-    )
+    if ( $jobId -ne $null ) {
+      $url_zip_file = "${api_url}/buildjobs/${jobId}/artifacts/${dependency_zip_name}"
+      Write-Output "-- Downloading ...`n${url_zip_file}"
+      $(Invoke-RestMethod "${url_zip_file}" `
+        -Method Get -DisableKeepAlive -TimeoutSec 300 `
+        -Headers @{ "Authorization" = "Bearer ${env:api_token}" } `
+        -ContentType 'application/zip, application/octet-stream' `
+        -OutFile $dependency_zip_name
+        $success = $?
+      )
+    } else { $success = $false
+      Warning 'Cannot find artifact for current configuration.'
+    }
     if ( $success ) {
       Write-Output '-- Downloading ... done'
       if ([IO.File]::Exists("${pwd}\${dependency_zip_name}")) {
-        Write-Output '-- Extracting ...'
+        Write-Output "-- Extracting ...`n${dependency_zip_name}"
         7z x -y -bso0 $dependency_zip_name -o"C:\Tools\vcpkg"
         Write-Output '-- Extracting ... done'
         if ( Test-Path 'C:\Tools\vcpkg\archive_incomplete' ) {
@@ -211,7 +240,6 @@ init:
       Info 'Reset previously compiled dependencies from artifact - failed' `
         -Details 'Rebuilding all dependencies'
     }
-    Write-Output "${pwd}\${dependency_zip_name}"
 
 install:
 # Packages to install from vcpkg:
