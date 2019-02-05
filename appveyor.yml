@@ -461,7 +461,7 @@ deploy:
   prerelease: true
   force_update: true
   on:
-    branch: master
+    branch: CI
     configuration: Release
 
 
