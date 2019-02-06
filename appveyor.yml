@@ -215,7 +215,6 @@ init:
       Write-Output "-- Downloading ...`n${url_zip_file}"
       $(Invoke-RestMethod "${url_zip_file}" `
         -Method Get -DisableKeepAlive -TimeoutSec 300 `
-        -Headers @{ "Authorization" = "Bearer ${env:api_token}" } `
         -ContentType 'application/zip, application/octet-stream' `
         -OutFile $dependency_zip_name
         $success = $?
